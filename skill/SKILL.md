@@ -38,7 +38,9 @@ ASSETS_DIR = os.path.expanduser("~/.claude/skills/brand-doc/assets")
 ### Automate Accelerator
 - **Primary orange:** `#F47920` → RGB(244, 121, 32)
 - **Primary purple:** `#412F8F` → RGB(65, 47, 143)
-- **Header background (dark docs):** `#1A1A1A` → RGB(26, 26, 26)
+- **Background:** Always white `#FFFFFF` — AA brand is light/white background, NOT dark
+- **Logo to use:** `AA-logo-dark.png` (full-colour orange + purple) — always on white background
+- **NEVER use:** `AA-logo-white.png` or dark `#1A1A1A` header strips for standard documents
 - **Body text:** `#1A1A1A`
 - **Accent/rule color:** `#F47920`
 - **Font:** Gilroy (all weights — Thin, Light, Regular, Medium, SemiBold, ExtraBold)
@@ -75,13 +77,56 @@ pip3 install python-docx -q
 #### Document Structure
 
 **Automate Accelerator:**
-- Header: Dark background strip (`#1A1A1A`) with AA white logo (left-aligned, width ~2 inches)
-- Orange horizontal rule line below header
-- Document title: Bold, 16pt, orange (`#FF6B00`)
+- Header: WHITE background with `AA-logo-dark.png` (full-colour orange + purple logo, left-aligned, width ~2 inches) — NO dark header strips
+- Orange horizontal rule line below logo
+- Document title: Bold, 16pt, orange (`#F47920`)
 - Recipient / date block: 11pt, dark grey
 - Body content: Calibri 11pt, `#1A1A1A`, 1.15 line spacing
 - Section headings: Bold 13pt, orange
 - Footer: 9pt, grey, centered
+
+#### PDF Page-Break Rules (MANDATORY — apply to every AA PDF)
+
+These rules prevent tables and section headers from splitting awkwardly across pages:
+
+1. **`sec()` — always keep header + first item only**
+   — wrapping the whole section in `KeepTogether` causes large white gaps when the block
+     is bigger than remaining page space. Only glue the header to its first item.
+
+2. **`make_table()` — only wrap tables with ≤4 data rows in `KeepTogether`**
+   — larger tables must flow freely to avoid white gaps. Never wrap a 6+ row table.
+
+3. **Never wrap single Flowables (SloganBox, CoreMsgBox, QuoteBlock) in `KeepTogether`**
+   — a single Flowable cannot split across pages anyway. Wrapping adds overhead with no benefit
+     and can trigger the same white-gap jump.
+
+4. **Never use `canvas.rect()` for decorative bars at y=0 or y≤5mm**
+   — they bleed off the page edge. Footer canvas calls must stay within `10–15mm` from bottom.
+
+**Standard helper pattern (copy exactly for every AA PDF):**
+
+```python
+from reportlab.platypus import KeepTogether
+
+def make_table(data, col_widths, style_fn=None):
+    t = Table(data, colWidths=col_widths)
+    t.setStyle(style_fn() if style_fn else tbl2())
+    num_data_rows = len(data) - 1
+    return KeepTogether(t) if num_data_rows <= 4 else t
+
+def sec(divider_text, content_items, colour=AA_PURPLE, gap=3*mm):
+    from reportlab.platypus import Table as RLTable
+    div = SectionDivider(divider_text, CW, colour=colour)
+    sp  = Spacer(1, gap)
+    items = list(content_items)
+    # If first item is a Table, only glue div+spacer together (not the table).
+    # Including a table in KeepTogether forces the whole block to jump pages,
+    # leaving a large white gap. Tables manage their own keep logic via make_table().
+    if items and isinstance(items[0], RLTable):
+        return [KeepTogether([div, sp])] + items
+    # For non-table first items, glue header to first item to prevent orphaned headers
+    return [KeepTogether([div, sp, items[0]])] + items[1:]
+```
 
 **Inspra AI:**
 - Header: White background with Inspra dark logo (left-aligned, width ~2 inches)
@@ -135,7 +180,7 @@ def set_cell_background(cell, hex_color):
 
 def create_aa_document(title, recipient, content_sections, output_path):
     doc = Document()
-    logo_path = os.path.join(ASSETS_DIR, "AA-logo-white.png")
+    logo_path = os.path.join(ASSETS_DIR, "AA-logo-dark.png")  # full-colour on white
 
     for section in doc.sections:
         section.top_margin = Cm(1.5)
@@ -143,33 +188,16 @@ def create_aa_document(title, recipient, content_sections, output_path):
         section.left_margin = Cm(2.5)
         section.right_margin = Cm(2.5)
 
-    # Header: Dark strip with white logo
+    # Header: White background with full-colour AA logo — NO dark strip
     header = doc.sections[0].header
-    header_table = header.add_table(1, 1, width=Inches(6.5))
-    header_table.style = 'Table Grid'
-    cell = header_table.rows[0].cells[0]
-    set_cell_background(cell, '1A1A1A')
-    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
-    cell.paragraphs[0].paragraph_format.space_before = Pt(6)
-    cell.paragraphs[0].paragraph_format.space_after = Pt(6)
-    run = cell.paragraphs[0].add_run()
+    header.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
+    header.paragraphs[0].paragraph_format.space_before = Pt(4)
+    header.paragraphs[0].paragraph_format.space_after = Pt(4)
+    run = header.paragraphs[0].add_run()
     run.add_picture(logo_path, width=Inches(2.0))
 
-    # Remove table borders
-    tbl = header_table._tbl
-    tblPr = tbl.tblPr
-    tblBorders = OxmlElement('w:tblBorders')
-    for border_name in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
-        border = OxmlElement(f'w:{border_name}')
-        border.set(qn('w:val'), 'none')
-        tblBorders.append(border)
-    tblPr.append(tblBorders)
-
-    for para in header.paragraphs:
-        para.clear()
-
-    # Orange rule
-    add_horizontal_rule(doc, 255, 107, 0)
+    # Orange rule — official AA orange #F47920
+    add_horizontal_rule(doc, 244, 121, 32)
 
     # Date & Recipient
     if recipient:
